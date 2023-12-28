@@ -223,7 +223,7 @@ fn main() -> Result<(), Error> {
                 )
             };
             if voice_started {
-                if vad_median.is_some_and(|i| i < 0.5) {
+                if vad_median.is_some_and(|i| i < args.vad_sensitivity) {
                     debug!("VAD thread exiting");
                     stop_recording_tx
                         .send(())
@@ -231,7 +231,7 @@ fn main() -> Result<(), Error> {
                     return Ok(());
                 }
             } else {
-                if vad_median.is_some_and(|i| i >= 0.5) {
+                if vad_median.is_some_and(|i| i >= args.vad_sensitivity) {
                     debug!("VAD detected start");
                     voice_started = true;
                 }
@@ -239,7 +239,7 @@ fn main() -> Result<(), Error> {
             std::thread::sleep(Duration::from_millis(50));
         }
     });
-    //The quick brown fox jumped over the lazy dog.The quick brown fox jumped over the lazy dog.
+
     let audio_data = audio_data_arc.clone();
     let stop_transcription = stop_transcription_arc.clone();
     let inference_thread = std::thread::spawn(move || -> Result<()> {
@@ -261,10 +261,7 @@ fn main() -> Result<(), Error> {
             let audio_data = audio_data_mut.clone();
             drop(audio_data_mut);
 
-            let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-                beam_size: 3,
-                patience: 0.,
-            });
+            let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 0 });
             params.set_print_special(false);
             params.set_print_progress(false);
             params.set_print_realtime(false);
