@@ -42,6 +42,10 @@ struct Args {
     #[arg(short, long, default_value = "ggml-tiny.en.bin")]
     model: String,
 
+    /// The delay between voice activity detections. Set to 0 to continuously detect. The lower the value the higher the CPU usage.
+    #[arg(long, default_value_t = 0.1)]
+    vad_delay: f32,
+
     /// The delay between transcription events. Set to 0 to continuously transcribe. The lower the value the higher the CPU usage.
     #[arg(long, default_value_t = 0.25)]
     transcribe_delay: f32,
@@ -145,7 +149,6 @@ fn main() -> Result<(), Error> {
     let audio_data = audio_data_arc.clone();
     let stop_transcription = stop_transcription_arc.clone();
     let voice_started = voice_started_arc.clone();
-
     let record_thread = std::thread::spawn(move || {
         debug!(
             "Audio devices: {}",
@@ -240,7 +243,7 @@ fn main() -> Result<(), Error> {
                     *voice_started.write().unwrap() = true;
                 }
             };
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(Duration::from_secs_f32(args.vad_delay));
         }
     });
 
