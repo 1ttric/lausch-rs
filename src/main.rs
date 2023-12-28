@@ -142,7 +142,7 @@ fn main() -> Result<(), Error> {
         .unwrap()
         .join(&args.model)
         .unwrap();
-    info!("Fetching model from {}", url.as_str());
+    debug!("Fetching model from {url}");
     let model_path = Cache::builder()
         .dir(dirs::cache_dir().unwrap().join("lausch/"))
         .freshness_lifetime(u64::MAX)
