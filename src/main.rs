@@ -27,7 +27,6 @@ use std::{
     time::{self, Duration},
 };
 
-
 use tracing::Level;
 use tracing::{debug, error, info};
 use url::Url;
@@ -35,8 +34,8 @@ use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperTokenData,
 };
 
-static SAMPLE_RATE: u32 = 16000;
-static SILERO_VAD_CHUNK_SIZE: u32 = 1536;
+static AUDIO_SAMPLE_RATE: u32 = 16000;
+static VAD_CHUNK_SIZE: u32 = 1536;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -45,7 +44,7 @@ struct Args {
     #[arg(short, long, default_value = "info")]
     verbosity: Level,
 
-    /// The model name to download and cache from Huggingface. (see https://huggingface.co/ggerganov/whisper.cpp/tree/main)
+    /// The ASR model name to download and cache from Huggingface. (see https://huggingface.co/ggerganov/whisper.cpp/tree/main)
     #[arg(short, long, default_value = "ggml-tiny.en.bin")]
     model: String,
 
@@ -177,7 +176,7 @@ fn main() -> Result<(), Error> {
             .build_input_stream(
                 &SupportedStreamConfig::new(
                     1,
-                    SampleRate(SAMPLE_RATE),
+                    SampleRate(AUDIO_SAMPLE_RATE),
                     SupportedBufferSize::Unknown,
                     SampleFormat::F32,
                 )
@@ -204,7 +203,7 @@ fn main() -> Result<(), Error> {
     let audio_data = audio_data_arc.clone();
     let vad_thread = std::thread::spawn(move || -> Result<()> {
         // Checks for a numeric VAD score [0-1] on the current audio buffer at each loop. Once the median of the last 5 scores passes a configurable threshold, consider voice started.
-        let mut vad = SileroVadSession::new(SAMPLE_RATE.into())?;
+        let mut vad = SileroVadSession::new(AUDIO_SAMPLE_RATE.into())?;
         let vad_scores = &mut Vec::<N32>::new();
         loop {
             let audio_data_vec = {
@@ -213,16 +212,16 @@ fn main() -> Result<(), Error> {
             };
 
             // Using the recommended chunk size from: https://github.com/snakers4/silero-vad/blob/5e7ee10ee065ab2b98751dd82b28e3c6360e19aa/utils_vad.py#L207C60-L207C64
-            let vad_input = if audio_data_vec.len() < SILERO_VAD_CHUNK_SIZE as usize {
+            let vad_input = if audio_data_vec.len() < VAD_CHUNK_SIZE as usize {
                 let to_pad = Array1::from(audio_data_vec.clone());
-                let mut padded = Array1::<f32>::zeros(Ix1(SILERO_VAD_CHUNK_SIZE as usize));
+                let mut padded = Array1::<f32>::zeros(Ix1(VAD_CHUNK_SIZE as usize));
                 padded
                     .slice_mut(s![-(to_pad.len() as i32)..])
                     .assign(&to_pad);
                 padded
             } else {
                 Array1::from(audio_data_vec.clone())
-                    .slice(s![-(SILERO_VAD_CHUNK_SIZE as i32)..])
+                    .slice(s![-(VAD_CHUNK_SIZE as i32)..])
                     .to_owned()
             };
 
@@ -259,7 +258,7 @@ fn main() -> Result<(), Error> {
                     // Once voice is detected, trim the audio buffer to avoid Whisper picking up things the VAD may have missed
                     *audio_data.write().unwrap() = Array1::from(audio_data_vec)
                         .slice(s![-min(
-                            SILERO_VAD_CHUNK_SIZE as i32 * 5,
+                            VAD_CHUNK_SIZE as i32 * 5,
                             audio_data_vec_len as i32
                         )..])
                         .to_vec();
