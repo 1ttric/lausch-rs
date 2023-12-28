@@ -8,7 +8,7 @@ use cpal::{
     SampleFormat, SampleRate, SupportedBufferSize, SupportedStreamConfig,
 };
 use crossbeam_channel::bounded;
-use inputbot::KeySequence;
+
 use inputbot::get_keybd_key;
 
 use inputbot::KeybdKey;
@@ -18,6 +18,7 @@ use ndarray::{s, Array1, Array3, ArrayBase, Axis, CowArray, Dim, Ix1, Ix3, Owned
 use ndarray_stats::{interpolate::Midpoint, Quantile1dExt};
 use noisy_float::types::{n32, n64, N32};
 use ort::tensor::OrtOwnedTensor;
+use std::cmp::min;
 use std::thread::sleep;
 use std::{
     cmp::max,
@@ -25,12 +26,17 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     time::{self, Duration},
 };
+
+
 use tracing::Level;
 use tracing::{debug, error, info};
 use url::Url;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperTokenData,
 };
+
+static SAMPLE_RATE: u32 = 16000;
+static SILERO_VAD_CHUNK_SIZE: u32 = 1536;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -58,6 +64,10 @@ struct Args {
     /// The size of the Whisper beam search
     #[arg(long, default_value_t = 3)]
     beam_search_size: u8,
+
+    /// Will save the raw f32le PCM audio as recorded to a temporary file
+    #[arg(long)]
+    save_audio: bool,
 }
 
 struct SileroVadSession {
@@ -167,7 +177,7 @@ fn main() -> Result<(), Error> {
             .build_input_stream(
                 &SupportedStreamConfig::new(
                     1,
-                    SampleRate(16000),
+                    SampleRate(SAMPLE_RATE),
                     SupportedBufferSize::Unknown,
                     SampleFormat::F32,
                 )
@@ -193,24 +203,27 @@ fn main() -> Result<(), Error> {
 
     let audio_data = audio_data_arc.clone();
     let vad_thread = std::thread::spawn(move || -> Result<()> {
-        let mut vad = SileroVadSession::new(16000)?;
+        // Checks for a numeric VAD score [0-1] on the current audio buffer at each loop. Once the median of the last 5 scores passes a configurable threshold, consider voice started.
+        let mut vad = SileroVadSession::new(SAMPLE_RATE.into())?;
         let vad_scores = &mut Vec::<N32>::new();
         loop {
-            let audio_data = {
+            let audio_data_vec = {
                 let audio_data_ref = audio_data.read().expect("Failed to lock audio_data");
                 audio_data_ref.clone()
             };
 
             // Using the recommended chunk size from: https://github.com/snakers4/silero-vad/blob/5e7ee10ee065ab2b98751dd82b28e3c6360e19aa/utils_vad.py#L207C60-L207C64
-            let vad_input = if audio_data.len() < 1536 {
-                let to_pad = Array1::from(audio_data);
-                let mut padded = Array1::<f32>::zeros(Ix1(1536));
+            let vad_input = if audio_data_vec.len() < SILERO_VAD_CHUNK_SIZE as usize {
+                let to_pad = Array1::from(audio_data_vec.clone());
+                let mut padded = Array1::<f32>::zeros(Ix1(SILERO_VAD_CHUNK_SIZE as usize));
                 padded
                     .slice_mut(s![-(to_pad.len() as i32)..])
                     .assign(&to_pad);
                 padded
             } else {
-                Array1::from(audio_data).slice(s![-1536..]).to_owned()
+                Array1::from(audio_data_vec.clone())
+                    .slice(s![-(SILERO_VAD_CHUNK_SIZE as i32)..])
+                    .to_owned()
             };
 
             let t0 = time::Instant::now();
@@ -242,6 +255,14 @@ fn main() -> Result<(), Error> {
                 if vad_median.is_some_and(|i| i >= args.vad_sensitivity) {
                     debug!("VAD detected start");
                     *voice_started.write().unwrap() = true;
+                    let audio_data_vec_len = audio_data_vec.len();
+                    // Once voice is detected, trim the audio buffer to avoid Whisper picking up things the VAD may have missed
+                    *audio_data.write().unwrap() = Array1::from(audio_data_vec)
+                        .slice(s![-min(
+                            SILERO_VAD_CHUNK_SIZE as i32 * 5,
+                            audio_data_vec_len as i32
+                        )..])
+                        .to_vec();
                 }
             };
             std::thread::sleep(Duration::from_secs_f32(args.vad_delay));
@@ -252,6 +273,7 @@ fn main() -> Result<(), Error> {
     let stop_transcription = stop_transcription_arc.clone();
     let voice_started = voice_started_arc.clone();
     let inference_thread = std::thread::spawn(move || -> Result<()> {
+        // Once voice activity has started, begin transcribing it continuously with a configurable delay. Remove undesired tokens like [UNKNOWN], (music), (unintelligible), and then type the text.
         let whisper_model = WhisperContext::new_with_params(
             model_path.to_str().unwrap(),
             WhisperContextParameters { use_gpu: true },
@@ -293,15 +315,12 @@ fn main() -> Result<(), Error> {
             for segment in 0..whisper.full_n_segments()? {
                 for token in 0..whisper.full_n_tokens(segment)? {
                     let token = whisper.full_get_token_data(segment, token)?;
-                    let token_str = match whisper_model.token_to_str(token.id) {
+                    let _token_str = match whisper_model.token_to_str(token.id) {
                         Ok(token_str) => token_str,
                         Err(_) => {
                             continue;
                         }
                     };
-                    if token_str.starts_with("[") && token_str.ends_with("]") {
-                        continue;
-                    }
                     if token.id != whisper_model.token_eot() {
                         tokens.push(token)
                     }
@@ -362,10 +381,14 @@ fn main() -> Result<(), Error> {
         }
         debug!("Transcription thread exiting");
 
-        let mut f = File::create("/tmp/output.file")?;
-        for float in audio_data.read().unwrap().iter() {
-            f.write_f32::<LittleEndian>(*float)?;
+        if args.save_audio {
+            let mut f = File::create("lausch-debug.pcm")?;
+            for float in audio_data.read().unwrap().iter() {
+                f.write_f32::<LittleEndian>(*float)?;
+            }
+            info!("Audio saved to lausch-debug.pcm");
         }
+
         Ok(())
     });
 
