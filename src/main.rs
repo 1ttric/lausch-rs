@@ -23,6 +23,7 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     time::{self, Duration},
 };
+use tracing::Level;
 use tracing::{debug, error, info};
 use url::Url;
 use whisper_rs::{
@@ -32,20 +33,24 @@ use whisper_rs::{
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Logging verbosity
+    #[arg(short, long, default_value = "info")]
+    verbosity: Level,
+
     /// The model name to download and cache from Huggingface. (see https://huggingface.co/ggerganov/whisper.cpp/tree/main)
     #[arg(short, long, default_value = "ggml-tiny.en.bin")]
     model: String,
 
     /// The delay between transcription events. Set to 0 to continuously transcribe. The lower the value the higher the CPU usage.
-    #[arg(short, long, default_value_t = 0.25)]
+    #[arg(long, default_value_t = 0.25)]
     transcribe_delay: f32,
 
     /// Sensitivity for the Silero VAD.
-    #[arg(short, long, default_value_t = 0.5)]
+    #[arg(long, default_value_t = 0.5)]
     vad_sensitivity: f32,
 
     /// The size of the Whisper beam search
-    #[arg(short, long, default_value_t = 3)]
+    #[arg(long, default_value_t = 3)]
     beam_search_size: u8,
 }
 
@@ -110,6 +115,11 @@ impl SileroVadSession {
 
 fn main() -> Result<(), Error> {
     let args = Args::parse();
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::fmt()
+            .with_max_level(args.verbosity)
+            .finish(),
+    )?;
     inputbot::init_device();
 
     let url = Url::parse("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/")
