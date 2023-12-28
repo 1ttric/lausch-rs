@@ -9,7 +9,7 @@ edition = "2021"
 anyhow = "1.0.77"
 byteorder = "1.5.0"
 cached-path = "0.6.1"
-clap = { version = "4.4.11", features = ["derive"] }
+clap = { version = "4.4.12", features = ["derive"] }
 cpal = "0.15.2"
 crossbeam-channel = "0.5.10"
 dirs = "5.0.1"
@@ -19,7 +19,7 @@ lazy-regex = "3.1.0"
 ndarray = "0.15.6"
 ndarray-stats = "0.5.1"
 noisy_float = "0.2.0"
-ort = "1.16.3"
+ort = { version = "1.16.3", features = ["load-dynamic"] }
 regex = "1.10.2"
 tracing = "0.1.40"
 tracing-subscriber = "0.3.18"
