@@ -8,6 +8,7 @@ use cpal::{
     SampleFormat, SampleRate, SupportedBufferSize, SupportedStreamConfig,
 };
 use crossbeam_channel::bounded;
+use inputbot::KeySequence;
 use inputbot::get_keybd_key;
 
 use inputbot::KeybdKey;
@@ -381,6 +382,7 @@ fn press_backspace() {
 }
 
 fn type_text(text: &str) {
+    //Taken from KeySequence.send() - as of this writing, inputbot v0.6 send() requires a 'static &str and is only fixed on master - but master does not compile...
     for c in text.chars() {
         let mut uppercase = false;
 
