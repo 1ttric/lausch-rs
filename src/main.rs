@@ -12,6 +12,7 @@ use inputbot::get_keybd_key;
 
 use inputbot::KeybdKey;
 use itertools::Itertools;
+use lazy_regex::regex;
 use ndarray::{s, Array1, Array3, ArrayBase, Axis, CowArray, Dim, Ix1, Ix3, OwnedRepr};
 use ndarray_stats::{interpolate::Midpoint, Quantile1dExt};
 use noisy_float::types::{n32, n64, N32};
@@ -139,9 +140,12 @@ fn main() -> Result<(), Error> {
     let audio_data_arc = Arc::new(RwLock::new(vec![0_f32]));
     let (stop_recording_tx, stop_recording_rx) = bounded::<()>(1);
     let stop_transcription_arc = Arc::new(Mutex::new(false));
+    let voice_started_arc = Arc::new(RwLock::new(false));
 
     let audio_data = audio_data_arc.clone();
     let stop_transcription = stop_transcription_arc.clone();
+    let voice_started = voice_started_arc.clone();
+
     let record_thread = std::thread::spawn(move || {
         debug!(
             "Audio devices: {}",
@@ -187,11 +191,11 @@ fn main() -> Result<(), Error> {
     let vad_thread = std::thread::spawn(move || -> Result<()> {
         let mut vad = SileroVadSession::new(16000)?;
         let vad_scores = &mut Vec::<N32>::new();
-        let mut voice_started = false;
         loop {
-            let audio_data_ref = audio_data.read().expect("Failed to lock audio_data");
-            let audio_data = audio_data_ref.clone();
-            drop(audio_data_ref);
+            let audio_data = {
+                let audio_data_ref = audio_data.read().expect("Failed to lock audio_data");
+                audio_data_ref.clone()
+            };
 
             // Using the recommended chunk size from: https://github.com/snakers4/silero-vad/blob/5e7ee10ee065ab2b98751dd82b28e3c6360e19aa/utils_vad.py#L207C60-L207C64
             let vad_input = if audio_data.len() < 1536 {
@@ -208,7 +212,7 @@ fn main() -> Result<(), Error> {
             let t0 = time::Instant::now();
             let vad_score = n32(vad.call(vad_input).expect("VAD failed"));
             debug!(
-                "VAD score {vad_score}, duration {:?}",
+                "VAD score {vad_score}, inference duration {:?}",
                 time::Instant::now().duration_since(t0)
             );
             vad_scores.push(vad_score);
@@ -222,7 +226,7 @@ fn main() -> Result<(), Error> {
                         .quantile_mut(n64(0.5), &Midpoint)?,
                 )
             };
-            if voice_started {
+            if voice_started.read().unwrap().clone() {
                 if vad_median.is_some_and(|i| i < args.vad_sensitivity) {
                     debug!("VAD thread exiting");
                     stop_recording_tx
@@ -233,7 +237,7 @@ fn main() -> Result<(), Error> {
             } else {
                 if vad_median.is_some_and(|i| i >= args.vad_sensitivity) {
                     debug!("VAD detected start");
-                    voice_started = true;
+                    *voice_started.write().unwrap() = true;
                 }
             };
             std::thread::sleep(Duration::from_millis(50));
@@ -242,6 +246,7 @@ fn main() -> Result<(), Error> {
 
     let audio_data = audio_data_arc.clone();
     let stop_transcription = stop_transcription_arc.clone();
+    let voice_started = voice_started_arc.clone();
     let inference_thread = std::thread::spawn(move || -> Result<()> {
         let whisper_model = WhisperContext::new_with_params(
             model_path.to_str().unwrap(),
@@ -256,7 +261,10 @@ fn main() -> Result<(), Error> {
         let mut exit_next_loop = false;
         let mut exit = false;
         while !exit {
-            debug!("Transcriber looping");
+            if !voice_started.read().unwrap().clone() {
+                std::thread::sleep(Duration::from_millis(100));
+                continue;
+            }
             let audio_data_mut = audio_data.read().expect("Failed to lock audio_data");
             let audio_data = audio_data_mut.clone();
             drop(audio_data_mut);
@@ -269,9 +277,14 @@ fn main() -> Result<(), Error> {
             params.set_suppress_blank(true);
             params.set_suppress_non_speech_tokens(false);
 
+            let t0 = time::Instant::now();
             whisper
                 .full(params, &audio_data[..])
                 .expect("Failed to inference");
+            debug!(
+                "Whisper inference duration {:?}",
+                time::Instant::now().duration_since(t0)
+            );
             let mut tokens = vec![];
             for segment in 0..whisper.full_n_segments()? {
                 for token in 0..whisper.full_n_tokens(segment)? {
@@ -303,13 +316,14 @@ fn main() -> Result<(), Error> {
                 .iter()
                 .filter_map(|token| whisper_model.token_to_str(token.id).ok())
                 .collect_vec();
-            let text = tokens_str
+            let mut text = tokens_str
                 .iter()
                 .filter(|token_str| !(token_str.starts_with("[") || token_str.ends_with("]")))
                 .join("");
-            let text = text
-                .replace(" [BLANK_AUDIO]", "")
-                .replace(" [BLANK_AUDIO", "");
+            text = regex!(r#" ?\(.+?\)"#).replace_all(&text, "").to_string();
+            text = regex!(r#" ?\[.+?\]"#).replace_all(&text, "").to_string();
+            text = regex!(r#"\(.+( |$)"#).replace_all(&text, "").to_string();
+            text = regex!(r#"\[.+( |$)"#).replace_all(&text, "").to_string();
             let text = text.trim();
 
             let longest_common_prefix = all_text
