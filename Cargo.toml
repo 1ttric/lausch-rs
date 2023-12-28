@@ -6,14 +6,14 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.77"
 byteorder = "1.5.0"
 cached-path = "0.6.1"
 clap = { version = "4.4.11", features = ["derive"] }
 cpal = "0.15.2"
-crossbeam-channel = "0.5.8"
+crossbeam-channel = "0.5.10"
 dirs = "5.0.1"
-inputbot = "0.6.0"
+inputbot = "0.6"
 itertools = "0.12.0"
 ndarray = "0.15.6"
 ndarray-stats = "0.5.1"
