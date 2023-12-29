@@ -74,9 +74,9 @@ struct Args {
     #[arg(long, default_value_t = 3)]
     beam_search_size: u8,
 
-    /// Will save the raw f32le PCM audio as recorded to a temporary file
-    #[arg(long)]
-    save_audio: bool,
+    /// Will save the raw f32le PCM audio as recorded
+    #[arg(long, default_value = Some("lausch-debug.pcm"))]
+    save_audio: Option<String>,
 }
 
 struct SileroVadSession {
@@ -394,8 +394,8 @@ fn main() -> Result<(), Error> {
         }
         debug!("Transcription thread exiting");
 
-        if args.save_audio {
-            let mut f = File::create("lausch-debug.pcm")?;
+        if let Some(path) = args.save_audio {
+            let mut f = File::create(path)?;
             for float in audio_data.read().unwrap().iter() {
                 f.write_f32::<LittleEndian>(*float)?;
             }
