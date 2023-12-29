@@ -19,6 +19,7 @@ use noisy_float::types::{n32, n64, N32};
 use ort::inputs;
 use ort::Session;
 use std::cmp::min;
+use std::io;
 use std::{
     cmp::max,
     fs::File,
@@ -134,6 +135,7 @@ fn main() -> Result<(), Error> {
     let args = Args::parse();
     tracing::subscriber::set_global_default(
         tracing_subscriber::fmt()
+            .with_writer(io::stderr)
             .with_max_level(args.verbosity)
             .finish(),
     )?;
