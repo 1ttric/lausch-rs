@@ -3,6 +3,7 @@ use byteorder::LittleEndian;
 use byteorder::WriteBytesExt;
 use cached_path::Cache;
 use clap::Parser;
+use clap::ValueEnum;
 use cpal::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, SampleRate, SupportedBufferSize, SupportedStreamConfig,
@@ -34,15 +35,26 @@ use whisper_rs::{
 static AUDIO_SAMPLE_RATE: u32 = 16000;
 static VAD_CHUNK_SIZE: u32 = 1536;
 
+#[derive(ValueEnum, Debug, Clone, PartialEq)]
+enum Mode {
+    Stdout,
+    StdoutContinuous,
+    Type,
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
+    /// Logging verbosity
+    #[arg(value_enum, short, long, default_value_t = Mode::Stdout)]
+    mode: Mode,
+
     /// Logging verbosity
     #[arg(short, long, default_value = "info")]
     verbosity: Level,
 
     /// The ASR model name to download and cache from Huggingface. (see https://huggingface.co/ggerganov/whisper.cpp/tree/main)
-    #[arg(short, long, default_value = "ggml-tiny.en.bin")]
+    #[arg(long, default_value = "ggml-tiny.en.bin")]
     model: String,
 
     /// The delay between voice activity detections. Set to 0 to continuously detect. The lower the value the higher the CPU usage.
@@ -125,7 +137,6 @@ fn main() -> Result<(), Error> {
             .with_max_level(args.verbosity)
             .finish(),
     )?;
-    inputbot::init_device();
 
     let url = Url::parse("https://huggingface.co/ggerganov/whisper.cpp/resolve/main/")
         .unwrap()
@@ -345,9 +356,11 @@ fn main() -> Result<(), Error> {
             let num_to_delete = all_text.len() as i32 - longest_common_prefix.len() as i32;
             let mut last_text = all_text.clone();
             if num_to_delete > 0 {
-                debug!("Deleting {num_to_delete} characters");
-                for _ in 0..num_to_delete {
-                    press_backspace();
+                if args.mode == Mode::Type {
+                    debug!("Deleting {num_to_delete} characters");
+                    for _ in 0..num_to_delete {
+                        press_backspace();
+                    }
                 }
                 last_text =
                     all_text[0..max(all_text.len() as i32 - num_to_delete, 0) as usize].into();
@@ -355,8 +368,10 @@ fn main() -> Result<(), Error> {
             let new_text = text[longest_common_prefix.len()..text.len()].to_string();
 
             if !new_text.is_empty() {
-                debug!("Typing characters {new_text:?}");
-                type_text(&new_text);
+                if args.mode == Mode::Type {
+                    debug!("Typing characters {new_text:?}");
+                    type_text(&new_text);
+                }
                 all_text = format!("{last_text}{new_text}");
             }
 
@@ -366,7 +381,14 @@ fn main() -> Result<(), Error> {
             if *stop_transcription.lock().unwrap() {
                 exit_next_loop = true;
             }
+            debug!("Current text: {all_text:?}");
+            if args.mode == Mode::StdoutContinuous {
+                println!("{all_text}");
+            }
             std::thread::sleep(Duration::from_secs_f32(args.transcribe_delay));
+        }
+        if args.mode == Mode::Stdout {
+            println!("{all_text}");
         }
         debug!("Transcription thread exiting");
 
