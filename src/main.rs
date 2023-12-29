@@ -10,6 +10,7 @@ use cpal::{
 use crossbeam_channel::bounded;
 
 use inputbot::get_keybd_key;
+use inputbot::KeySequence;
 
 use inputbot::KeybdKey;
 use itertools::Itertools;
@@ -404,34 +405,6 @@ fn press_backspace() {
 }
 
 fn type_text(text: &str) {
-    //Taken from KeySequence.send() - as of this writing, inputbot v0.6 send() requires a 'static &str and is only fixed on master - but master does not compile...
-    for c in text.chars() {
-        let mut uppercase = false;
-
-        if let Some(keybd_key) = {
-            if c.is_uppercase()
-                || [
-                    '!', '@', '#', '$', '%', '^', '&', '*', '(', ')', '_', '+', '{', '}', '|', ':',
-                    '"', '<', '>', '?', '~',
-                ]
-                .contains(&c)
-            {
-                uppercase = true;
-            }
-
-            get_keybd_key(c)
-        } {
-            if uppercase {
-                KeybdKey::LShiftKey.press();
-            }
-
-            keybd_key.press();
-            sleep(Duration::from_millis(20));
-            keybd_key.release();
-
-            if uppercase {
-                KeybdKey::LShiftKey.release();
-            }
-        };
-    }
+    KeySequence(text).send();
 }
+
