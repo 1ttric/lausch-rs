@@ -8,10 +8,7 @@ use cpal::{
     SampleFormat, SampleRate, SupportedBufferSize, SupportedStreamConfig,
 };
 use crossbeam_channel::bounded;
-
-use inputbot::get_keybd_key;
 use inputbot::KeySequence;
-
 use inputbot::KeybdKey;
 use itertools::Itertools;
 use lazy_regex::regex;
@@ -20,14 +17,12 @@ use ndarray_stats::{interpolate::Midpoint, Quantile1dExt};
 use noisy_float::types::{n32, n64, N32};
 use ort::tensor::OrtOwnedTensor;
 use std::cmp::min;
-use std::thread::sleep;
 use std::{
     cmp::max,
     fs::File,
     sync::{Arc, Mutex, RwLock},
     time::{self, Duration},
 };
-
 use tracing::Level;
 use tracing::{debug, error, info};
 use url::Url;
@@ -407,4 +402,3 @@ fn press_backspace() {
 fn type_text(text: &str) {
     KeySequence(text).send();
 }
-
