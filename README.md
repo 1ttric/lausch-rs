@@ -10,7 +10,7 @@ cargo install --git https://git.svc.vesey.tech/will/lausch
 
 ## Usage
 
-If key inputs are not being sent, you may need to refer to [inputbot](https://github.com/obv-mikhail/InputBot)) documentation for additional permissions configuration.
+If key inputs are not being sent, you may need to refer to [inputbot](https://github.com/obv-mikhail/InputBot) documentation for additional permissions configuration.
 
 ```bash
 lausch
