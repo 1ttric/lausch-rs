@@ -12,10 +12,11 @@ use inputbot::KeySequence;
 use inputbot::KeybdKey;
 use itertools::Itertools;
 use lazy_regex::regex;
-use ndarray::{s, Array1, Array3, ArrayBase, Axis, CowArray, Dim, Ix1, Ix3, OwnedRepr};
+use ndarray::{s, Array1, Array3, ArrayBase, Axis, Dim, Ix1, Ix3, OwnedRepr};
 use ndarray_stats::{interpolate::Midpoint, Quantile1dExt};
 use noisy_float::types::{n32, n64, N32};
-use ort::tensor::OrtOwnedTensor;
+use ort::inputs;
+use ort::Session;
 use std::cmp::min;
 use std::{
     cmp::max,
@@ -81,14 +82,9 @@ impl SileroVadSession {
             .unwrap()
             .cached_path("https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx")
             .expect("Failed to fetch VAD model from repository");
-        let session = ort::session::SessionBuilder::new(
-            &ort::Environment::builder()
-                .with_name("test")
-                .with_log_level(ort::LoggingLevel::Verbose)
-                .build()?
-                .into_arc(),
-        )?
-        .with_model_from_file(model_path)?;
+
+        ort::init().commit()?;
+        let session = Session::builder()?.with_model_from_file(model_path)?;
         Ok(SileroVadSession {
             session,
             sr: Array1::<i64>::from(vec![sample_rate]),
@@ -99,22 +95,20 @@ impl SileroVadSession {
 
     fn call(&mut self, input: Array1<f32>) -> Result<f32> {
         let input = input.insert_axis(Axis(0));
-        let input = CowArray::from(input).into_dyn();
-        let sr = CowArray::from(self.sr.clone()).into_dyn();
-        let h = CowArray::from(self.h.clone()).into_dyn();
-        let c = CowArray::from(self.c.clone()).into_dyn();
-        let inputs = vec![
-            ort::Value::from_array(self.session.allocator(), &input)?,
-            ort::Value::from_array(self.session.allocator(), &sr)?,
-            ort::Value::from_array(self.session.allocator(), &h)?,
-            ort::Value::from_array(self.session.allocator(), &c)?,
-        ];
-        let outputs: Vec<ort::Value> = self.session.run(inputs)?;
-        let output: OrtOwnedTensor<f32, _> = outputs[0].try_extract()?;
+        let outputs = self
+            .session
+            .run(inputs![
+                input,
+                self.sr.view(),
+                self.h.view(),
+                self.c.view()
+            ]?)
+            .unwrap();
+        let output = outputs[0].extract_tensor::<f32>()?;
         let output = output.view().to_owned()[[0, 0]];
-        let h_out: OrtOwnedTensor<f32, _> = outputs[1].try_extract()?;
+        let h_out = outputs[1].extract_tensor::<f32>()?;
         let h_out = h_out.view().to_owned().into_dimensionality::<Ix3>()?;
-        let c_out: OrtOwnedTensor<f32, _> = outputs[2].try_extract()?;
+        let c_out = outputs[2].extract_tensor::<f32>()?;
         let c_out = c_out.view().to_owned().into_dimensionality::<Ix3>()?;
 
         self.h = h_out;
@@ -351,7 +345,7 @@ fn main() -> Result<(), Error> {
             let num_to_delete = all_text.len() as i32 - longest_common_prefix.len() as i32;
             let mut last_text = all_text.clone();
             if num_to_delete > 0 {
-                debug!("Deleting {num_to_delete}");
+                debug!("Deleting {num_to_delete} characters");
                 for _ in 0..num_to_delete {
                     press_backspace();
                 }
@@ -361,7 +355,7 @@ fn main() -> Result<(), Error> {
             let new_text = text[longest_common_prefix.len()..text.len()].to_string();
 
             if !new_text.is_empty() {
-                debug!("Typing {new_text:?}");
+                debug!("Typing characters {new_text:?}");
                 type_text(&new_text);
                 all_text = format!("{last_text}{new_text}");
             }
