@@ -46,13 +46,17 @@ enum Mode {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Logging verbosity
+    /// Program mode
     #[arg(value_enum, short, long, default_value_t = Mode::Stdout)]
     mode: Mode,
 
     /// Logging verbosity
     #[arg(short, long, default_value = "info")]
     verbosity: Level,
+
+    /// Don't wait to hear a voice to start transcribing - start immediately
+    #[arg(long)]
+    transcribe_immediately: bool,
 
     /// The ASR model name to download and cache from Huggingface. (see https://huggingface.co/ggerganov/whisper.cpp/tree/main)
     #[arg(long, default_value = "ggml-tiny.en.bin")]
@@ -75,7 +79,7 @@ struct Args {
     beam_search_size: u8,
 
     /// Will save the raw f32le PCM audio as recorded
-    #[arg(long, default_value = Some("lausch-debug.pcm"))]
+    #[arg(long)]
     save_audio: Option<String>,
 }
 
@@ -157,7 +161,7 @@ fn main() -> Result<(), Error> {
     let audio_data_arc = Arc::new(RwLock::new(vec![0_f32]));
     let (stop_recording_tx, stop_recording_rx) = bounded::<()>(1);
     let stop_transcription_arc = Arc::new(Mutex::new(false));
-    let voice_started_arc = Arc::new(RwLock::new(false));
+    let voice_started_arc = Arc::new(RwLock::new(args.transcribe_immediately));
 
     let audio_data = audio_data_arc.clone();
     let stop_transcription = stop_transcription_arc.clone();
