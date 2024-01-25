@@ -66,9 +66,13 @@ struct Args {
     #[arg(long, default_value_t = 0.25)]
     transcribe_delay: f32,
 
-    /// Sensitivity for the Silero VAD.
+    /// Starting sensitivity for the Silero VAD.
     #[arg(long, default_value_t = 0.5)]
-    vad_sensitivity: f32,
+    vad_starting_sensitivity: f32,
+
+    /// Stopping sensitivity for the Silero VAD. Relevant only once speech has been detected as started. Set to 0 to listen forever.
+    #[arg(long, default_value_t = 0.5)]
+    vad_stopping_sensitivity: f32,
 
     /// The size of the Whisper beam search
     #[arg(long, default_value_t = 3)]
@@ -246,15 +250,18 @@ fn main() -> Result<(), Error> {
                 )
             };
             if voice_started.read().unwrap().clone() {
-                if vad_median.is_some_and(|i| i < args.vad_sensitivity) {
-                    debug!("VAD thread exiting");
+                if vad_median.is_some_and(|i| i < args.vad_stopping_sensitivity) {
+                    debug!("VAD detected end");
                     stop_recording_tx
                         .send(())
                         .expect("Failed to send recording exit signal");
+                    debug!("VAD thread exiting");
                     return Ok(());
                 }
             } else {
-                if vad_median.is_some_and(|i| i >= args.vad_sensitivity) {
+                if vad_median.is_some_and(|i| {
+                    i >= args.vad_starting_sensitivity && args.vad_starting_sensitivity > 0.0
+                }) {
                     debug!("VAD detected start");
                     *voice_started.write().unwrap() = true;
                     let audio_data_vec_len = audio_data_vec.len();
