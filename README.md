@@ -7,7 +7,7 @@ Lausch is a Rust tool that allows a user to dictate text via voice for input and
 ## Installation
 
 ```bash
-cargo install --git https://git.svc.vesey.tech/will/lausch
+cargo install --git https://git.svc.vesey.tech/will/lausch-rs
 ```
 
 ## Usage
